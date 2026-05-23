@@ -1,13 +1,6 @@
 /**
- * 核心期刊多库标注插件 — content.js v2.7 (全功能终极闭环版)
- * 支持 CSSCI / 北大核心 / AMI 全系列 / 国家社科基金
- * 支持通过 popup 动态筛选显示的数据集
- *
- * v2.7 升级内容：
- * 1. 【全局单例浮层】作废徽章内嵌 tooltip，全页共享唯一外挂浮层，彻底免疫知网各类容器 overflow:hidden 裁剪 Bug。
- * 2. 【运行时哈希缓存】引入 LOOKUP_CACHE 哈希短路机制，滚屏重复扫描开销直接降为 O(1)。
- * 3. 【大小写模糊匹配】通用标准化函数 normStr 强转小写，无缝兼容各类大小写不规范的英文引文核心期刊。
- * 4. 【存储前缀安全隔离】全面更换本地存储键名为安全隔离前缀，防止与知网原生脚本或竞品插件发生脏读冲突。
+ * 核心期刊多库标注插件 — content.js v2.9.1 (原刊名多格式强化版)
+ * 重点支持：（原：XXX;YYY）多旧刊名 + 知网简化名称
  */
 (function () {
   'use strict';
@@ -50,22 +43,22 @@
     return null;
   }
 
-  // ── 多级标准化高速字典索引 ────────────────────────────────────────
-  let normIdx      = {};   
-  let shortIdx     = {};   
-  let pureShortIdx = {};   
-  let aliasIdx     = {};   
-  let INDEX        = {};   
-  let ALIAS        = {};   
-
-  // 🌟【优化点3】：引入 .toLowerCase() 强制小写，达成中英双语大小写模糊通配
-  function normStr(s) {
+  // ── 超级标准化函数 ───────────────────────────────────────────────
+  function aggressiveNorm(s) {
     return s
+      .replace(/《|》/g, '')
+      .replace(/\s+/g, '')
+      .replace(/（上海）|（北京）|（广东）|（江苏）|（浙江）|（山东）|（全国）|（天津）|（重庆）|（四川）/g, '')
+      .replace(/（[^）]*上海社会科学院[^）]*）/g, '')
+      .replace(/[（(][^）)]*[）)]/g, '')           // 移除所有括号内容
+      .toLowerCase()
+      .trim();
+  }
+
+  function normStr(s) {
+    return aggressiveNorm(s)
       .replace(/（/g, '(').replace(/）/g, ')')
       .replace(/：/g, ':')
-      .replace(/《/g, '').replace(/》/g, '')
-      .replace(/\s+/g, '')
-      .toLowerCase()
       .trim();
   }
 
@@ -89,6 +82,15 @@
     return s;
   }
 
+  // ── 索引构建（重点强化原刊名解析） ───────────────────────────────
+  let normIdx      = {};   
+  let shortIdx     = {};   
+  let pureShortIdx = {};   
+  let aliasIdx     = {};   
+  let oldNameMap   = {};   // 原刊名 → 正式刊名
+  let INDEX        = {};   
+  let ALIAS        = {};   
+
   async function loadData() {
     const url  = chrome.runtime.getURL('data/core_plugin_data.json');
     const res  = await fetch(url);
@@ -97,11 +99,8 @@
     ALIAS = data.alias || {};
 
     const rawKeys = Object.keys(INDEX);
-    const len = rawKeys.length;
-    for (let i = 0; i < len; i++) {
-      const rawKey = rawKeys[i];
+    for (let rawKey of rawKeys) {
       const nk = normStr(rawKey);
-      
       if (!(nk in normIdx)) normIdx[nk] = rawKey;
 
       const balanced = balanceParens(nk);
@@ -114,64 +113,63 @@
       if (pure !== balanced && !(pure in normIdx) && !(pure in shortIdx) && !(pure in pureShortIdx)) {
         pureShortIdx[pure] = rawKey;
       }
+
+      // 强化：解析多种“原：”格式（支持分号分隔）
+      const oldMatch = rawKey.match(/（原[：:]\s*([^）]+)）/);
+      if (oldMatch && oldMatch[1]) {
+        const oldParts = oldMatch[1].split(/[;；,、]/);
+        oldParts.forEach(part => {
+          const cleanOld = aggressiveNorm(part.trim());
+          if (cleanOld && cleanOld.length > 1) {
+            oldNameMap[cleanOld] = rawKey;
+          }
+        });
+      }
     }
 
-    const aliasEntries = Object.entries(ALIAS);
-    for (let i = 0; i < aliasEntries.length; i++) {
-      const [aliasKey, canonical] = aliasEntries[i];
+    Object.entries(ALIAS).forEach(([aliasKey, canonical]) => {
       const nk = normStr(aliasKey);
-      if (!(nk in aliasIdx)) aliasIdx[nk] = canonical;
-    }
+      aliasIdx[nk] = canonical;
+    });
   }
 
-  function normalize(name) {
-    return name
-      .replace(/\s+/g, '')
-      .replace(/[（(](?:不收|OA期|官网|Email|email|纸质|打印|国际刊号|有稿酬|双月刊|季刊|月刊)[^）)]*[）)]/g, '')
-      .trim();
-  }
-
-  // 🌟【优化点2】：声明运行时高效哈希查询缓存对象，拦截高频多重解析
   const LOOKUP_CACHE = new Map();
 
   function lookup(rawName) {
     if (!rawName) return null;
     const name = rawName.trim();
-    
-    // 缓存短路短截线
-    if (LOOKUP_CACHE.has(name)) {
-      return LOOKUP_CACHE.get(name);
-    }
+    if (LOOKUP_CACHE.has(name)) return LOOKUP_CACHE.get(name);
 
     const nk = normStr(name);
-    let rawKey = normIdx[nk];
-    if (!rawKey) rawKey = shortIdx[nk];
+    let rawKey = normIdx[nk] || shortIdx[nk] || pureShortIdx[nk] || aliasIdx[nk];
+
+    // 原刊名优先匹配
     if (!rawKey) {
-      const canonical = aliasIdx[nk];
-      if (canonical) rawKey = canonical;
-    }
-    
-    if (!rawKey && nk.includes('(')) {
-      const pureIncomingNk = nk.replace(/\([^()]*\)$/, '');
-      if (normIdx[pureIncomingNk]) rawKey = normIdx[pureIncomingNk];
-    }
-    if (!rawKey) {
-      rawKey = pureShortIdx[nk];
+      const cleanName = aggressiveNorm(name);
+      rawKey = oldNameMap[cleanName];
     }
 
+    // 超级模糊匹配（兜底）
     if (!rawKey) {
-      if (INDEX[name]) {
-        rawKey = name;
-      } else if (ALIAS[name] && INDEX[ALIAS[name]]) {
-        rawKey = ALIAS[name];
-      } else {
-        const normalized = normalize(name);
-        if (INDEX[normalized]) rawKey = normalized;
+      const cleanName = aggressiveNorm(name);
+      for (let key of Object.keys(INDEX)) {
+        const cleanKey = aggressiveNorm(key);
+        if (cleanKey.startsWith(cleanName) || cleanName.startsWith(cleanKey) ||
+            cleanKey.includes(cleanName) || cleanName.includes(cleanKey)) {
+          rawKey = key;
+          break;
+        }
       }
     }
 
+    // 最终兜底
+    if (!rawKey) {
+      if (INDEX[name]) rawKey = name;
+      else if (ALIAS[name]) rawKey = ALIAS[name];
+    }
+
     if (!rawKey || !INDEX[rawKey]) {
-      LOOKUP_CACHE.set(name, null); // 存入负匹配缓存，防止查空穿透
+      LOOKUP_CACHE.set(name, null);
       return null;
     }
 
@@ -183,10 +181,11 @@
       impact: info.i      || info.impact || '0',
     };
 
-    LOOKUP_CACHE.set(name, result); // 存入正命中哈希缓存
+    LOOKUP_CACHE.set(name, result);
     return result;
   }
 
+  // 以下部分保持不变（getBadges、tooltip、注入逻辑等）
   let enabledCats = {};
   function isCatEnabled(catId) {
     if (Object.keys(enabledCats).length === 0) return true;
@@ -195,13 +194,13 @@
 
   function getBadges(typeStr) {
     if (!typeStr) return [];
-    const seen   = new Set();
+    const seen = new Set();
     const result = [];
-    const segs   = typeStr.split(',');
-    for (let i = 0; i < segs.length; i++) {
-      const seg = segs[i].trim();
-      if (!seg) continue;
-      const catId = classifySegment(seg);
+    const segs = typeStr.split(',');
+    for (let seg of segs) {
+      const s = seg.trim();
+      if (!s) continue;
+      const catId = classifySegment(s);
       if (!catId || seen.has(catId)) continue;
       seen.add(catId);
       if (!isCatEnabled(catId)) continue;
@@ -211,7 +210,6 @@
     return result;
   }
 
-  // 🌟【优化点1-A】：构建或维持顶层唯一的单例浮层 DOM 骨架
   function getGlobalTooltip() {
     let tooltip = document.getElementById('cssci-global-tooltip');
     if (!tooltip) {
@@ -227,9 +225,9 @@
     container.className = 'badge-group';
     container.setAttribute('data-cssci-injected', '1');
 
-    const typeStr  = info.cat || info.type || '';
-    const badges   = getBadges(typeStr);
-    const impact   = parseFloat(info.impact) > 0 ? parseFloat(info.impact).toFixed(3) : null;
+    const typeStr = info.cat || info.type || '';
+    const badges = getBadges(typeStr);
+    const impact = parseFloat(info.impact) > 0 ? parseFloat(info.impact).toFixed(3) : null;
 
     if (badges.length === 0) return null;
 
@@ -239,11 +237,10 @@
       return s;
     }).join(',');
 
-    // 🌟【优化点1-B】：重构徽章生成，取消 HTML 强耦合，绑定高精物理定位事件
     badges.forEach(({ cls, label }) => {
       const badge = document.createElement('span');
       badge.className = `cssci-badge ${cls}`;
-      badge.innerText = label; 
+      badge.innerText = label;
 
       badge.addEventListener('mouseenter', () => {
         const tooltip = getGlobalTooltip();
@@ -253,15 +250,13 @@
           (impact ? `<div class="cssci-tooltip-row"><span class="cssci-tooltip-label">影响因子</span><span class="cssci-tooltip-value">${impact}</span></div>` : '');
 
         const rect = badge.getBoundingClientRect();
-        // 计算全文档物理绝对坐标线
         tooltip.style.left = `${rect.left + window.scrollX + rect.width / 2}px`;
         tooltip.style.top = `${rect.top + window.scrollY - 8}px`;
         tooltip.classList.add('active');
       });
 
       badge.addEventListener('mouseleave', () => {
-        const tooltip = getGlobalTooltip();
-        tooltip.classList.remove('active');
+        getGlobalTooltip().classList.remove('active');
       });
 
       container.appendChild(badge);
@@ -269,7 +264,6 @@
     return container;
   }
 
-  // ── 精准高速DOM注入线 ──────────────────────────────────────────────
   let injectedCount = 0;
 
   function tryInject(sourceEl, titleEl) {
@@ -282,6 +276,7 @@
     }
   }
 
+  // 注入函数（processTableRows 等）保持不变...
   function processTableRows() {
     const rows = document.querySelectorAll('.result-table tr, .result-table-list tr');
     for (let i = 0; i < rows.length; i++) {
@@ -313,10 +308,8 @@
     for (let i = 0; i < candidateEls.length; i++) {
       const txt = candidateEls[i].innerText.trim();
       if (!txt || txt.includes('查看该刊')) continue;
-
       const journalName = txt.split(/[,，]/)[0].replace(/[.\s、，。]+$/, '').replace(/\s+/g, '').trim();
       if (!journalName) continue;
-
       const res = lookup(journalName);
       if (res) { info = res; break; }
     }
@@ -330,7 +323,6 @@
       container.setAttribute('data-cssci-detail-container', '1');
       container.style.cssText = 'display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin: 12px 0 6px 0; width: 100%;';
       container.appendChild(group);
-
       titleEl.parentNode.insertBefore(container, titleEl.nextSibling);
       injectedCount++;
     }
@@ -361,7 +353,6 @@
     for (let i = 0; i < items.length; i++) {
       const li = items[i];
       const titleLink = li.querySelector('.document-title');
-      
       if (!titleLink || li.hasAttribute('data-cssci-plain-checked') || titleLink.querySelector('[data-cssci-injected]')) continue;
       
       li.setAttribute('data-cssci-plain-checked', '1');
@@ -406,14 +397,12 @@
   let timer = null;
   const observer = new MutationObserver((mutations) => {
     let hasValidMutation = false;
-    for (let i = 0; i < mutations.length; i++) {
-      const addedNodes = mutations[i].addedNodes;
-      for (let j = 0; j < addedNodes.length; j++) {
-        const node = addedNodes[j];
+    for (let mutation of mutations) {
+      for (let node of mutation.addedNodes) {
         if (node.nodeType === 1 && 
             !node.classList?.contains('cssci-badge') && 
             !node.classList?.contains('badge-group') &&
-            node.id !== 'cssci-global-tooltip' && // 避免单例自身干扰
+            node.id !== 'cssci-global-tooltip' &&
             !node.hasAttribute('data-cssci-detail-container')) {
           hasValidMutation = true;
           break;
@@ -424,12 +413,11 @@
 
     if (hasValidMutation) {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { injectBadges(); timer = null; }, 400);
+      timer = setTimeout(injectBadges, 400);
     }
   });
 
-  // ── 启动入口 ──────────────────────────────────────────────────────
-  // 🌟【优化点4-A】：切换读取键名为带专用安全隔离前缀的独立键名
+  // ── 启动 ──────────────────────────────────────────────────────
   chrome.storage.local.get(['cnki_marker_enabled_cats'], (data) => {
     enabledCats = data.cnki_marker_enabled_cats || {};
   });
@@ -447,11 +435,11 @@
 
     let nCssci = 0, nPku = 0, nAmi = 0, nNssf = 0;
     const values = Object.values(INDEX);
-    for (let i = 0; i < values.length; i++) {
-      const t = values[i].t || values[i].type || values[i].c || values[i].cat || '';
-      if (t.includes('CSSCI'))        nCssci++;
+    for (let v of values) {
+      const t = v.t || v.type || v.c || v.cat || '';
+      if (t.includes('CSSCI')) nCssci++;
       if (t.includes('北大核心') || t.includes('中文核心')) nPku++;
-      if (t.includes('AMI'))          nAmi++;
+      if (t.includes('AMI')) nAmi++;
       if (t.includes('国家社科基金')) nNssf++;
     }
     try { chrome.storage.local.set({ cssciReady: true, nCssci, nPku, nAmi, nNssf }); } catch (_) {}

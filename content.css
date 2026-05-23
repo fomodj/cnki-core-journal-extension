@@ -1,92 +1,94 @@
 /* ══════════════════════════════════════════
-   核心期刊多库标注 — content.css v2.4 (单例解耦版)
+   核心期刊多库标注 — content.css v2.5 (紧凑跟标题版)
    ══════════════════════════════════════════ */
 
-/* ── 徽章基础样式 ── */
+/* ── 徽章基础样式（更紧凑） ── */
 .cssci-badge {
   display: inline-flex;
   align-items: center;
   box-sizing: border-box;     
-  margin-left: 6px;
-  padding: 0 8px;             
-  height: 20px;               
-  border-radius: 10px;        
-  font-size: 11px;            
+  margin: 0 4px 2px 0;        /* 减小外边距 */
+  padding: 0 7px;             
+  height: 19px;               
+  border-radius: 9px;        
+  font-size: 10.5px;            
   font-weight: 600;
   font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
-  line-height: 18px;          
+  line-height: 17px;          
   white-space: nowrap;
   vertical-align: middle;
   cursor: default;
   position: relative;
   text-decoration: none !important;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
   flex-shrink: 0;
-  margin-bottom: 0;           
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); 
-  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06); 
+  transition: all 0.15s;
 }
 
 .cssci-badge:hover {
   transform: translateY(-1px);
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.15);
   z-index: 10;
 }
 
-/* ══════ CSSCI 系列（红色家族）══════ */
+/* ══════ 各分类颜色保持不变（略微调小）══════ */
 .cssci-badge.cat-source { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
 .cssci-badge.cat-extend { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
 .cssci-badge.cat-collect { background: #f3e8ff; color: #7e22ce; border: 1px solid #d8b4fe; }
-
-/* ══════ 北大核心（橙色）══════ */
 .cssci-badge.cat-pku { background: #ffedd5; color: #c2410c; border: 1px solid #fdba74; }
 
-/* ══════ AMI 系列（绿色渐变家族）══════ */
 .cssci-badge.cat-ami-top { background: #a7f3d0; color: #064e3b; border: 1px solid #34d399; }
 .cssci-badge.cat-ami-auth { background: #bbf7d0; color: #14532d; border: 1px solid #4ade80; }
 .cssci-badge.cat-ami-core { background: #ccfbf1; color: #0f766e; border: 1px solid #5eead4; }
-.cssci-badge.cat-ami-ext { background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; }
-.cssci-badge.cat-ami-ent { background: #f0f9ff; color: #0284c7; border: 1px solid #bae6fd; }
-.cssci-badge.cat-ami-cj { background: #eff6ff; color: #1d4ed8; border: 1px solid #93c5fd; }
-.cssci-badge.cat-ami-ej { background: #eef2ff; color: #4338ca; border: 1px solid #a5b4fc; }
-.cssci-badge.cat-ami-ci { background: #faf5ff; color: #7c3aed; border: 1px solid #c4b5fd; }
-.cssci-badge.cat-ami-ei { background: #fdf4ff; color: #a21caf; border: 1px solid #e879f9; }
+.cssci-badge.cat-ami-ext,
+.cssci-badge.cat-ami-ent,
+.cssci-badge.cat-ami-cj,
+.cssci-badge.cat-ami-ej,
+.cssci-badge.cat-ami-ci,
+.cssci-badge.cat-ami-ei { 
+  background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; 
+}
 
-/* ══════ 国家社科基金（琥珀黄）══════ */
 .cssci-badge.cat-nssf { background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; }
 
-/* ══════ 默认兜底 ══════ */
-.cssci-badge.cat-default { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+/* ── 徽章组容器（关键修复）── */
+.badge-group {
+  display: inline-flex;
+  flex-wrap: wrap; 
+  gap: 3px 4px;           /* 大幅减小间距 */
+  margin-left: 6px;       /* 紧贴标题 */
+  vertical-align: middle;
+  align-items: center;
+}
 
+/* 强制不让徽章组单独占行 */
+.badge-group .cssci-badge {
+  margin: 0 !important;
+}
 
-/* 🌟【优化点1-C】：彻底删除旧嵌套内含 CSS 声明，重构外挂型全局单例样式 */
+/* ── 全局 Tooltip（保持原样） ── */
 #cssci-global-tooltip {
-  position: absolute;         /* 强制物理坐标定位 */
+  position: absolute;
   background: #1a1a2e;
   color: #eee;
   font-size: 12px;
-  font-weight: 400;
   padding: 8px 12px;
   border-radius: 6px;
-  white-space: nowrap;
   box-shadow: 0 4px 16px rgba(0,0,0,.35);
-  line-height: 1.7;
+  line-height: 1.6;
   min-width: 180px;
-  text-align: left;
-  letter-spacing: normal;
-  z-index: 2147483647;        /* 锁死最高浏览器级层级线，突破知网各种 overflow:hidden 拦截 */
-  pointer-events: none;       /* 开启鼠标穿透，防止覆盖遮挡下层网页原生交互 */
-  transform: translate(-50%, -100%); /* 精准让 Tooltip 原点悬浮在徽章中轴线正上方 */
+  z-index: 2147483647;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
   opacity: 0;
   transition: opacity .12s ease-out;
 }
 
-/* 浮层淡入活跃类 */
 #cssci-global-tooltip.active {
   opacity: 1;
 }
 
-/* 单例倒三角形小尾巴挂载 */
 #cssci-global-tooltip::after {
   content: "";
   position: absolute;
@@ -105,22 +107,8 @@
 .cssci-tooltip-label {
   color: #94a3b8;
   font-size: 11px;
-  flex-shrink: 0;
   min-width: 48px;
 }
 .cssci-tooltip-value {
   color: #fff;
-  font-size: 12px;
-}
-
-/* ── 多徽章组合容器 ── */
-.badge-group {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px; 
-  margin-left: 8px;
-  vertical-align: middle;
-}
-.badge-group .cssci-badge {
-  margin-left: 0 !important;
 }
