@@ -7,6 +7,9 @@
   if (window.__cssciLoaded) return;
   window.__cssciLoaded = true;
 
+  // ── 需要排除的文献类型列表 ───────────────────────────────────────
+  const EXCLUDE_TYPES = ['博士', '硕士', '图书', '会议', '报纸', '年鉴', '专利', '标准', '法律法规'];
+
   // ── 分类定义表 ──────────────────────────────────────────────────
   const CAT_DEFS = {
     'cssci-source':      { cls: 'cat-source',   label: 'CSSCI来源'   },
@@ -185,7 +188,6 @@
     return result;
   }
 
-  // 以下部分保持不变（getBadges、tooltip、注入逻辑等）
   let enabledCats = {};
   function isCatEnabled(catId) {
     if (Object.keys(enabledCats).length === 0) return true;
@@ -276,23 +278,46 @@
     }
   }
 
-  // 注入函数（processTableRows 等）保持不变...
+  // ── 新增了数据库排除逻辑 ──────────────────────────────────────────
   function processTableRows() {
     const rows = document.querySelectorAll('.result-table tr, .result-table-list tr');
     for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      
+      // 检查文献类型，如果在排除列表中则跳过
+      const dataEl = row.querySelector('.data span, .data');
+      if (dataEl) {
+        const docType = dataEl.textContent.trim();
+        if (EXCLUDE_TYPES.includes(docType)) {
+          continue; 
+        }
+      }
+
       tryInject(
-        rows[i].querySelector('.source a, td:nth-child(4) a'),
-        rows[i].querySelector('.name a, .fz14')
+        row.querySelector('.source a, td:nth-child(4) a'),
+        row.querySelector('.name a, .fz14')
       );
     }
   }
 
+  // ── 新增了数据库排除逻辑 ──────────────────────────────────────────
   function processCardItems() {
     const items = document.querySelectorAll('.scjg-list li, .result-list li');
     for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+
+      // 检查文献类型
+      const dataEl = item.querySelector('.data span, .data, .doc-type');
+      if (dataEl) {
+        const docType = dataEl.textContent.trim();
+        if (EXCLUDE_TYPES.includes(docType)) {
+          continue; 
+        }
+      }
+
       tryInject(
-        items[i].querySelector('.left-name a, .source a'),
-        items[i].querySelector('.title a') || items[i].querySelector('h3 a')
+        item.querySelector('.left-name a, .source a'),
+        item.querySelector('.title a') || item.querySelector('h3 a')
       );
     }
   }
