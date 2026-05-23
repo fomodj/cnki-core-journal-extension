@@ -1,12 +1,14 @@
 /**
- * 核心期刊多库标注插件 — popup.js v2.0
+ * 核心期刊多库标注插件 — popup.js v2.1
  * 动态生成数据集筛选面板，支持单选 / 组全选 / 全部开启
+ *
+ * v2.1 升级点：同步更换存储键名为前缀安全隔离型，闭环防脏读设计
  */
 (function () {
   'use strict';
 
   // ══════════════════════════════════════════════════════════════
-  //  数据集定义：分组 → 分类（顺序与 content.js 保持一致）
+  //  数据集定义：分组 → 分类
   // ══════════════════════════════════════════════════════════════
   const GROUPS = [
     {
@@ -53,14 +55,13 @@
     },
   ];
 
-  // ── 当前启用状态（true = 显示，false = 隐藏）─────────────────────
-  let enabledCats = {}; // 空对象 = 全部启用
+  let enabledCats = {}; 
 
   function isEnabled(catId) {
     return enabledCats[catId] !== false;
   }
 
-  // ── DOM refs ────────────────────────────────────────────────────
+  // ── DOM refs ──
   const dotEl    = document.getElementById('status-dot');
   const textEl   = document.getElementById('status-text');
   const nCssciEl = document.getElementById('n-cssci');
@@ -70,12 +71,11 @@
   const filterBody = document.getElementById('filter-body');
   const btnAll   = document.getElementById('btn-enable-all');
 
-  // ── 保存到 storage ───────────────────────────────────────────────
+  // 🌟【优化点4-B】：同步修改保存函数中的键名为安全隔离前缀型
   function save() {
-    chrome.storage.local.set({ enabledCats });
+    chrome.storage.local.set({ cnki_marker_enabled_cats: enabledCats });
   }
 
-  // ── 更新单个药丸的外观 ──────────────────────────────────────────
   function syncPill(catId) {
     const pill = document.querySelector(`.pill-toggle[data-cat="${catId}"]`);
     if (!pill) return;
@@ -86,7 +86,6 @@
     }
   }
 
-  // ── 构建筛选面板 UI ─────────────────────────────────────────────
   function buildFilterUI() {
     filterBody.innerHTML = '';
 
@@ -94,7 +93,6 @@
       const grpEl = document.createElement('div');
       grpEl.className = 'cat-group';
 
-      // 组标题
       const header = document.createElement('div');
       header.className = 'cat-group-header';
 
@@ -119,7 +117,6 @@
       header.appendChild(nameEl);
       if (grp.cats.length > 1) header.appendChild(toggleAllBtn);
 
-      // 药丸区
       const grid = document.createElement('div');
       grid.className = 'pill-grid';
 
@@ -153,7 +150,6 @@
     });
   }
 
-  // ── "全部开启" 按钮 ─────────────────────────────────────────────
   btnAll.addEventListener('click', () => {
     GROUPS.forEach(grp => grp.cats.forEach(cat => {
       enabledCats[cat.id] = true;
@@ -162,7 +158,6 @@
     save();
   });
 
-  // ── 更新统计数字 ────────────────────────────────────────────────
   function updateStats(data) {
     if (data.nCssci != null && nCssciEl) nCssciEl.textContent = data.nCssci;
     if (data.nPku   != null && nPkuEl)   nPkuEl.textContent   = data.nPku;
@@ -193,10 +188,10 @@
       if (textEl) textEl.textContent = '请在知网文献检索页使用';
     }
 
-    // 读取 storage，构建 UI
-    const keys = ['cssciReady', 'nCssci', 'nPku', 'nAmi', 'nNssf', 'injectedCount', 'enabledCats'];
+    // 🌟【优化点4-C】：读取初始化参数时，同步将旧键名替换为独立的防污染前缀
+    const keys = ['cssciReady', 'nCssci', 'nPku', 'nAmi', 'nNssf', 'injectedCount', 'cnki_marker_enabled_cats'];
     chrome.storage.local.get(keys, (data) => {
-      enabledCats = data.enabledCats || {};
+      enabledCats = data.cnki_marker_enabled_cats || {};
       buildFilterUI();
       updateStats(data);
 
