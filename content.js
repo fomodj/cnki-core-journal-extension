@@ -1,14 +1,13 @@
 /**
- * 核心期刊多库标注插件 — content.js v2.1
+ * 核心期刊多库标注插件 — content.js v2.3 (详情页全适配高稳版)
  * 支持 CSSCI / 北大核心 / AMI 全系列 / 国家社科基金
  * 支持通过 popup 动态筛选显示的数据集
  *
- * v2.1 修复：期刊名多级标准化匹配
- * 1. 全角括号（）→ 半角括号 ()，全角冒号 → 半角冒号，《》→ 空，空格→ 空
- * 2. 自动补全数据中残缺的右括号（共 6 条脏数据）
- * 3. 剥离数据键末尾的元信息后缀（原:、原名:、中英文、合并、更名、优稿不收…）
- * 构建"简名索引"，允许 CNKI 只显示不含后缀的期刊现用名时也能命中
- * 4. 以上三层查找均无命中时，再走原有 alias 表
+ * v2.3 升级：
+ * 1. 完美适配网络首发版详情页结构，新增 .top-tip a 选择器优先级
+ * 2. 引入多候选路径贪婪匹配，自动过滤“查看该刊”等辅助节点
+ * 3. 增强过滤算法，自动裁剪期刊名末尾由知网改版引入的句号点（.）与杂质符号
+ * 4. 独家支持详情页下方“参考文献/引文网络”列表中的期刊核心级别同步标注
  */
 (function () {
   'use strict';
@@ -42,7 +41,6 @@
         seg.includes('中文核心'))         return 'pku';
     if (seg.includes('AMI顶级'))         return 'ami-top';
     if (seg.includes('AMI权威'))         return 'ami-auth';
-    // 先匹配长串（集刊/国际刊），防止被短串"AMI核心/AMI入库"提前截获
     if (seg.includes('AMI核心集刊'))     return 'ami-core-journal';
     if (seg.includes('AMI入库集刊'))     return 'ami-enter-journal';
     if (seg.includes('AMI核心国际刊'))   return 'ami-core-intl';
@@ -54,27 +52,13 @@
     return null;
   }
 
-  // ── 多级标准化查找（核心升级） ────────────────────────────────────
-  //
-  // 数据中期刊名存在大量"装饰"，CNKI 显示的往往是纯净现用名，例如：
-  //   数据键：逻辑学研究（原：中山大学学报论丛）
-  //   CNKI：  逻辑学研究
-  //
-  //   数据键：安徽大学学报（哲社版）（原：安徽大学学报(哲学社会科学版）  ← 括号不匹配
-  //   CNKI：  安徽大学学报(哲社版)
-  //
-  // 三级查找：
-  //   Level 1 normIdx   — 全角/空格/书名号标准化后直接命中
-  //   Level 2 shortIdx  — 再剥离末尾元信息括号后命中（原:、原名:、中英文、合并…）
-  //   Level 3 aliasIdx  — 走原有 alias 表（处理旧名/别名）
+  // ── 多级标准化查找 ────────────────────────────────────────────────
+  let normIdx  = {};   
+  let shortIdx = {};   
+  let aliasIdx = {};   
+  let INDEX    = {};   
+  let ALIAS    = {};   
 
-  let normIdx  = {};   // normalized(key)        → raw key
-  let shortIdx = {};   // stripped(normalized(key)) → raw key，仅存"剥离后与原不同"的条目
-  let aliasIdx = {};   // normalized(alias_key)   → alias value（canonical raw key）
-  let INDEX    = {};   // raw key → { t, c, i, name }
-  let ALIAS    = {};   // raw alias key → canonical raw key
-
-  /** Step 1：字符级标准化（不改变实际含义） */
   function normStr(s) {
     return s
       .replace(/（/g, '(').replace(/）/g, ')')
@@ -84,24 +68,17 @@
       .trim();
   }
 
-  /** 补全缺失的右括号（应对少数脏数据） */
   function balanceParens(s) {
     const diff = (s.match(/\(/g) || []).length - (s.match(/\)/g) || []).length;
     return diff > 0 ? s + ')'.repeat(diff) : s;
   }
 
-  // 末尾元信息括号的内容特征
   const META_RE = /原[名]?:|^中英文$|合并|更名|优稿不收|不收版面费/;
 
-  /**
-   * Step 2：从末尾反复剥离"元信息括号组"
-   * 支持一层嵌套，例：(原:XX(旧名))
-   */
   function stripMetaSuffixes(s) {
     let changed = true;
     while (changed) {
       changed = false;
-      // 匹配最后一个顶层括号组（允许其内部有一层嵌套）
       const m = s.match(/\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$/);
       if (m && META_RE.test(m[1])) {
         s = s.slice(0, m.index).trimEnd();
@@ -118,30 +95,26 @@
     INDEX = data.index || {};
     ALIAS = data.alias || {};
 
-    // 构建 normIdx
     for (const rawKey of Object.keys(INDEX)) {
       const nk = normStr(rawKey);
       if (!(nk in normIdx)) normIdx[nk] = rawKey;
     }
 
-    // 构建 shortIdx（只存"剥离后与 normIdx 键不同"的映射，避免覆盖精确命中）
     for (const rawKey of Object.keys(INDEX)) {
       const nk      = balanceParens(normStr(rawKey));
       const short   = stripMetaSuffixes(nk);
-      const origNk  = normStr(rawKey);           // 未补全括号版，用于比较
+      const origNk  = normStr(rawKey);           
       if (short !== origNk && !(short in normIdx) && !(short in shortIdx)) {
         shortIdx[short] = rawKey;
       }
     }
 
-    // 构建 aliasIdx
     for (const [aliasKey, canonical] of Object.entries(ALIAS)) {
       const nk = normStr(aliasKey);
       if (!(nk in aliasIdx)) aliasIdx[nk] = canonical;
     }
   }
 
-  // ── 标准化名称（保留原逻辑，现仅作兜底） ────────────────────────
   function normalize(name) {
     return name
       .replace(/\s+/g, '')
@@ -149,31 +122,18 @@
       .trim();
   }
 
-  /**
-   * 多级 lookup：
-   * 1. normIdx  — 标准化后精确命中
-   * 2. shortIdx — 剥离元信息后命中
-   * 3. aliasIdx — alias 表命中
-   * 4. 原始旧逻辑兜底（直接查 INDEX / ALIAS）
-   */
   function lookup(rawName) {
     if (!rawName) return null;
     const name = rawName.trim();
 
-    // Level 1：标准化精确匹配
     const nk = normStr(name);
     let rawKey = normIdx[nk];
+    if (!rawKey) rawKey = shortIdx[nk];
     if (!rawKey) {
-      // Level 2：剥离元信息后匹配
-      rawKey = shortIdx[nk];
-    }
-    if (!rawKey) {
-      // Level 3：alias 表
       const canonical = aliasIdx[nk];
       if (canonical) rawKey = canonical;
     }
     if (!rawKey) {
-      // Level 4：原始逻辑兜底（直接 key / normalize）
       if (INDEX[name]) {
         rawKey = name;
       } else if (ALIAS[name] && INDEX[ALIAS[name]]) {
@@ -194,7 +154,6 @@
     };
   }
 
-  // ── 用户启用的分类（从 storage 读取）────────────────────────────
   let enabledCats = {};
 
   function isCatEnabled(catId) {
@@ -202,7 +161,6 @@
     return enabledCats[catId] !== false;
   }
 
-  // ── 解析 type 字段 → 徽章列表 ───────────────────────────────────
   function getBadges(typeStr) {
     if (!typeStr) return [];
     const seen   = new Set();
@@ -224,8 +182,6 @@
     container.className = 'badge-group';
     container.setAttribute('data-cssci-injected', '1');
 
-    // 优先使用 c 字段（info.cat）：这是预处理好的完整分类列表，包含北大核心等
-    // t 字段（info.type）是原始冗长描述，北大核心覆盖不全（1365 vs 1975 条）
     const typeStr  = info.cat || info.type || '';
     const badges   = getBadges(typeStr);
     const impact   = parseFloat(info.impact) > 0
@@ -234,10 +190,8 @@
 
     if (badges.length === 0) return null;
 
-    // 🌟 新增逻辑：为浮层中的 CSSCI 类型追加 (2025-2026)
     const displayTypeStr = typeStr.split(/[,，]/).map(seg => {
       const s = seg.trim();
-      // 如果当前字段包含 'CSSCI' 且尚未添加年份，则自动补全年份
       if (s.includes('CSSCI') && !s.includes('(2025-2026)')) {
         return s + '(2025-2026)';
       }
@@ -300,27 +254,92 @@
     });
   }
 
+  // 🌟 核心适配重写：详情页（知网节）自适应居中换行方案
   function processDetailPage() {
-    const topSpace = document.querySelector('.top-space a');
-    if (!topSpace) return;
-    const info    = lookup(topSpace.innerText);
-    const titleEl = document.querySelector('#chTitle, .wx-tit h1, .title .main-title');
-    if (info && titleEl && !titleEl.querySelector('[data-cssci-injected]')) {
-      const group = makeBadgeGroup(info);
-      if (group) { titleEl.appendChild(group); injectedCount++; }
+    // 1. 广谱候选选择器组合（优先匹配新版 .top-tip a，兼容老版选择器）
+    const candidateEls = document.querySelectorAll('.top-tip a, .breadcrumb a, .academic-source a, .source-navigator a, .journal-title a, #sourcelink');
+    
+    let info = null;
+
+    // 2. 迭代寻找第一个有效命中的期刊节点
+    for (const el of candidateEls) {
+      const txt = el.innerText.trim();
+      // 过滤掉“查看该刊数据收录来源”等无关辅助文字
+      if (!txt || txt.includes('查看该刊')) continue;
+
+      // 清洗：去除逗号分流、并利用正则强制裁剪掉尾部的英文点（.）、空格、顿号等杂质
+      const journalName = txt.split(/[,，]/)[0].replace(/[.\s、，。]+$/, '').replace(/\s+/g, '').trim();
+      if (!journalName) continue;
+
+      const res = lookup(journalName);
+      if (res) {
+        info = res;
+        break; // 匹配成功，跳出循环
+      }
     }
+
+    if (!info) return;
+
+    // 3. 广谱匹配详情页大标题节点
+    const titleEl = document.querySelector('#chTitle, .wx-tit h1, .title .main-title, .doc-title h1, .article-title h1');
+    if (!titleEl) return;
+
+    // 4. 防抖与防重复注入检查
+    if (titleEl.nextElementSibling && titleEl.nextElementSibling.hasAttribute('data-cssci-detail-container')) {
+      return;
+    }
+
+    const group = makeBadgeGroup(info);
+    if (group) {
+      group.style.marginLeft = '0'; // 清除列表页非对称左边距
+
+      // 5. 组装独立成行的 Flex 容器线（实现完美对称居中、且支持多级徽章自动换行不重叠）
+      const container = document.createElement('div');
+      container.setAttribute('data-cssci-detail-container', '1');
+      container.style.cssText = 'display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin: 12px 0 6px 0; width: 100%;';
+      container.appendChild(group);
+
+      // 6. 核心锚定动作：安全插入至大标题正下方
+      titleEl.parentNode.insertBefore(container, titleEl.nextSibling);
+      
+      injectedCount++;
+      try { chrome.storage.local.set({ injectedCount }); } catch (_) {}
+    }
+  }
+
+  // 🌟 独家追加：详情页下方“引文网络（参考文献等）”列表期刊评级实时同步标注
+  function processDetailReferences() {
+    document.querySelectorAll('.essayBox .ebBd li, .mianbaoxian .ebBd li').forEach(li => {
+      const titleLink = li.querySelector('.document-title');
+      if (!titleLink || li.hasAttribute('data-cssci-checked')) return;
+
+      const allLinks = li.querySelectorAll('a');
+      let journalLink = null;
+      for (const a of allLinks) {
+        // 排除掉文章题目本身的链接和年期的链接，剩下的即为引用的期刊链接
+        if (!a.classList.contains('document-title') && !a.classList.contains('year-issue') && a.innerText.trim()) {
+          journalLink = a;
+          break;
+        }
+      }
+      if (journalLink) {
+        tryInject(journalLink, titleLink);
+      }
+    });
   }
 
   function injectBadges() {
     processTableRows();
     processCardItems();
     processDetailPage();
+    processDetailReferences(); // 执行引文网络列表注入
     try { chrome.storage.local.set({ injectedCount }); } catch (_) {}
   }
 
   // ── 清除并重新注入（当筛选条件变更时调用）──────────────────────
   function clearAndReinject() {
     document.querySelectorAll('.badge-group[data-cssci-injected]').forEach(el => el.remove());
+    document.querySelectorAll('[data-cssci-detail-container]').forEach(el => el.remove()); 
     document.querySelectorAll('[data-cssci-checked]').forEach(el => {
       el.removeAttribute('data-cssci-checked');
     });
